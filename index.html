@@ -393,9 +393,34 @@ select option{background:var(--paper)}
   #sidebar-overlay{display:none !important}
   #sidebar{transform:none !important}
 }
+/* ── PASSWORD SCREEN ─────────────────────────────────── */
+#pw-screen{position:fixed;inset:0;background:var(--ink);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:0}
+#pw-screen.hidden{display:none}
+.pw-box{background:var(--paper);border-radius:16px;padding:40px 36px;width:100%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,0.4);text-align:center}
+.pw-logo{font-family:var(--serif);font-size:26px;font-weight:700;color:var(--amber);margin-bottom:4px}
+.pw-sub{font-family:var(--sans);font-size:12px;color:var(--ink3);margin-bottom:28px;letter-spacing:.3px}
+.pw-label{font-family:var(--sans);font-size:11px;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.8px;text-align:left;margin-bottom:7px}
+.pw-input{width:100%;padding:12px 14px;font-size:15px;font-family:var(--sans);border:2px solid var(--cream3);border-radius:8px;background:var(--cream);color:var(--ink);outline:none;margin-bottom:14px;transition:border .2s}
+.pw-input:focus{border-color:var(--amber)}
+.pw-btn{width:100%;padding:13px;background:var(--amber);color:var(--paper);font-family:var(--sans);font-size:14px;font-weight:700;border:none;border-radius:8px;cursor:pointer;letter-spacing:.3px;transition:background .2s}
+.pw-btn:hover{background:var(--amber2)}
+.pw-error{font-family:var(--sans);font-size:12px;color:var(--red);margin-top:10px;min-height:18px}
+.pw-device{font-family:var(--sans);font-size:11px;color:var(--ink4);margin-top:18px}
 </style>
 </head>
 <body>
+<!-- PASSWORD SCREEN -->
+<div id="pw-screen">
+  <div class="pw-box">
+    <div class="pw-logo">Dr. Madan</div>
+    <div class="pw-sub">PROGRESS DASHBOARD</div>
+    <div class="pw-label">Password</div>
+    <input class="pw-input" type="password" id="pw-input" placeholder="Enter password…" onkeydown="if(event.key==='Enter')checkPW()">
+    <button class="pw-btn" onclick="checkPW()">Unlock Dashboard</button>
+    <div class="pw-error" id="pw-error"></div>
+    <div class="pw-device" id="pw-device"></div>
+  </div>
+</div>
 
 <!-- MOBILE TOP BAR -->
 <header id="mobile-topbar">
@@ -486,6 +511,7 @@ select option{background:var(--paper)}
     </button>
   </nav>
   <div class="sidebar-bottom">
+    <div id="sync-status" style="padding:4px 4px 10px;text-align:center;min-height:24px"></div>
     <div class="streak-display">
       <span class="streak-fire">🔥</span>
       <div>
@@ -1020,10 +1046,85 @@ select option{background:var(--paper)}
 <div class="notification" id="notification"></div>
 
 <script>
-// ===== DATA STORE =====
+// ===== DATA STORE — JSONBin Cloud Sync =====
 const KEY = 'madan_dashboard_v1';
-function load(){try{return JSON.parse(localStorage.getItem(KEY))||initData()}catch{return initData()}}
-function save(){localStorage.setItem(KEY,JSON.stringify(D))}
+
+// ── PASTE YOUR JSONBIN DETAILS HERE ──────────────────────────────────
+const JSONBIN_API_KEY = '$2a$10$.VhmXal99jGt3TphT6fpRuWHlhfP3n7opiOI/iAS4hAi6kltjtFlG';  // starts with $2b$...
+const JSONBIN_BIN_ID  = '6a00088f250b1311c32ad704';   // looks like 6642f3...
+// ─────────────────────────────────────────────────────────────────────
+
+const JSONBIN_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
+const JSONBIN_HEADERS = {
+  'Content-Type': 'application/json',
+  'X-Master-Key': JSONBIN_API_KEY,
+  'X-Bin-Versioning': 'false'
+};
+
+function isConfigured(){
+  return JSONBIN_API_KEY !== 'PASTE_YOUR_API_KEY_HERE' && JSONBIN_BIN_ID !== 'PASTE_YOUR_BIN_ID_HERE';
+}
+
+function setSyncStatus(state){
+  const el = document.getElementById('sync-status');
+  if(!el) return;
+  const map = {
+    syncing: {icon:'⟳', text:'Syncing…',              color:'var(--amber)'},
+    saved:   {icon:'☁', text:'Cloud saved',            color:'var(--green)'},
+    offline: {icon:'⚠', text:'Offline — local only',  color:'var(--red)'},
+    setup:   {icon:'⚙', text:'Setup required',         color:'var(--ink3)'},
+  };
+  const s = map[state] || map.offline;
+  el.innerHTML = `<span style="color:${s.color};font-size:11px;font-family:var(--sans);display:flex;align-items:center;justify-content:center;gap:4px"><span>${s.icon}</span>${s.text}</span>`;
+}
+
+// Load from localStorage cache instantly on startup
+function load(){
+  try{ return JSON.parse(localStorage.getItem(KEY)) || initData(); }
+  catch{ return initData(); }
+}
+
+// Save: write to localStorage immediately, then push to JSONBin (debounced)
+let _saveTimer = null;
+function save(){
+  localStorage.setItem(KEY, JSON.stringify(D));
+  if(!isConfigured()){ setSyncStatus('setup'); return; }
+  setSyncStatus('syncing');
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(async ()=>{
+    try{
+      await fetch(JSONBIN_URL, {
+        method: 'PUT',
+        headers: JSONBIN_HEADERS,
+        body: JSON.stringify(D)
+      });
+      setSyncStatus('saved');
+    } catch(e){
+      console.warn('Cloud save failed:', e);
+      setSyncStatus('offline');
+    }
+  }, 800);
+}
+
+// Pull latest data from JSONBin on startup
+async function startCloudSync(){
+  if(!isConfigured()){ setSyncStatus('setup'); return; }
+  setSyncStatus('syncing');
+  try{
+    const res = await fetch(JSONBIN_URL + '/latest', { headers: {'X-Master-Key': JSONBIN_API_KEY} });
+    const json = await res.json();
+    if(json && json.record){
+      D = json.record;
+      localStorage.setItem(KEY, JSON.stringify(D));
+      renderDashboard();
+      notify('☁ Cloud data loaded!', 'green');
+    }
+    setSyncStatus('saved');
+  } catch(e){
+    console.warn('Cloud load failed:', e);
+    setSyncStatus('offline');
+  }
+}
 function initData(){
   return {
     xp:0, level:1, streak:0, lastActiveDate:'',
@@ -1999,15 +2100,65 @@ function updateTopbarStreak(){
   if(el)el.textContent=D.streak||0;
 }
 
-// ===== INIT =====
-window.addEventListener('load',()=>{
+// ===== PASSWORD & DEVICE AUTH =====
+const PW_CORRECT   = 'Madan Progress';
+const PW_KEY       = 'madan_auth_v1';       // stored in localStorage per device
+const DEVICE_KEY   = 'madan_device_id_v1';  // unique ID for this device/browser
+
+function getDeviceId(){
+  let id = localStorage.getItem(DEVICE_KEY);
+  if(!id){
+    id = 'dev_' + Math.random().toString(36).slice(2,10) + '_' + Date.now();
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
+
+function isDeviceTrusted(){
+  return localStorage.getItem(PW_KEY) === 'trusted';
+}
+
+function trustDevice(){
+  localStorage.setItem(PW_KEY, 'trusted');
+}
+
+function checkPW(){
+  const val = document.getElementById('pw-input').value;
+  if(val === PW_CORRECT){
+    trustDevice();
+    unlockApp();
+  } else {
+    document.getElementById('pw-error').textContent = '❌ Wrong password. Try again.';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-input').focus();
+  }
+}
+
+function unlockApp(){
+  document.getElementById('pw-screen').classList.add('hidden');
+  // Run the full app init after unlocking
   checkStreak();
   updateXPBar();
   updatePomoDisplay();
   updatePomoDots();
   renderDashboard();
-  document.getElementById('dash-date').textContent=new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-  updateTopbarStreak();
+  document.getElementById('dash-date').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  if(typeof updateTopbarStreak === 'function') updateTopbarStreak();
+  startCloudSync();
+}
+
+// ===== INIT =====
+window.addEventListener('load',()=>{
+  if(isDeviceTrusted()){
+    // Known device — skip password, go straight in
+    unlockApp();
+  } else {
+    // New device — show password screen
+    const devId = getDeviceId();
+    document.getElementById('pw-device').textContent = '🔒 New device detected — password required';
+    document.getElementById('pw-input').focus();
+    // pw-screen is visible by default, nothing else needed
+  }
 });
 </script>
 </body>
